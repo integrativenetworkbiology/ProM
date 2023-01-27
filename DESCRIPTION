@@ -1,0 +1,16 @@
+Package: ProM
+Title: What the Package Does (one line, title case)
+Version: 0.0.0.9000
+Authors@R: person("Li", "Wang", email = "li.wang@mssm.edu", role = c("aut","cre"))
+Description: What the package does (one paragraph).
+Depends: R (>= 3.6.3)
+Imports:
+	Seurat (>= 3.1.5), corpcor (>= 1.6.10), nnls (>= 1.4), e1071 (>= 1.7), NMF (>= 0.3), xbioc (>= 0.1.19), Biobase (>= 2.46), DeconRNASeq (>= 1.28), MuSiC (>= 0.1.1), BisqueRNA (>= 1.0.4), pcaMethods (>= 1.82.0), fitdistrplus (>= 1.0)
+License: What license is it under?
+Encoding: UTF-8
+LazyData: true
+RoxygenNote: 7.0.2
+Suggests: 
+    knitr,
+    rmarkdown
+VignetteBuilder: knitr
