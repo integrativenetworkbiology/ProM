@@ -17,6 +17,7 @@
 #' @export
 prepareInput<-function(bulk,sc,outfile,cellN=2000,majorlabel="majorlabel",minorlabel="minorlabel",samplelabel="sampleID",markerN=200)
   {
+    library("Matrix")
     
     commongenes<-intersect(rownames(bulk),rownames(sc))
     print(paste("There are", length(commongenes),"common genes:renormaliation"))
@@ -51,7 +52,8 @@ minormarkerL<-lapply(minormarkerL,function(m){if(length(grep("^RPL|^RPS",m$gene)
 markers<-rbind(markers,do.call("rbind",minormarkerL))
 markers<-gettopmarkers(markers,topN=markerN)
     
-    print("calculate mean and variance of reference profile") 
+    print("calculate mean and variance of reference profile")
+
  majorsc.basis<-getMeanVar(sc, meanMethod="poolmean", celltype=majorlabel, sample=samplelabel, verbose = TRUE)
   minorsc.basis<-getMeanVar(sc, meanMethod="poolmean", celltype=minorlabel, sample=samplelabel, verbose = TRUE)
 
@@ -63,10 +65,18 @@ markers<-gettopmarkers(markers,topN=markerN)
   rownames(map)<-map[,2]
   for(i in NAminor)minorsc.basis[[2]][which(is.na(minorsc.basis[[2]][,i])),i]<-majorsc.basis[[2]][which(is.na(minorsc.basis[[2]][,i])),map[i,1]]
   }
- ##### 
-    if(!missing(outfile))save(majorsc.basis,minorsc.basis,bulk,markers,file=outfile)else{return(list(majorsc.basis=majorsc.basis,minorsc.basis=minorsc.basis,bulk=bulk,markers=markers))}
+    ######################## NA in sigma matrix
+  NAminor<-colnames(minorsc.basis[[2]])[colSums(is.na(minorsc.basis[[2]]))>0]
+  if(length(NAminor)>0)print(paste0("Warning: can't estimate cross-patient variance for ",NAminor,". Profile-based ProM will not work. Please remove/merge this cell cluster."))  
+    
+ ##### no markers found
+ cluster2remove<-setdiff(colnames(minorsc.basis[[1]]),unique(markers$cluster))
+if(length(cluster2remove)>0) print(paste0("Warning: no markers found for",cluster2remove,". Marker-based ProM will not work. Please remove or merge this cell cluster, or use only profile-based ProM"))
+ ######   if(!missing(outfile))save(majorsc.basis,minorsc.basis,bulk,markers,file=outfile)else{return(list(majorsc.basis=majorsc.basis,minorsc.basis=minorsc.basis,bulk=bulk,markers=markers))}
     
 }
+
+
 
 
 #######################################################################
