@@ -11,10 +11,12 @@
 #' @param method One of the three ProM stratigies: 1)using both reference profile and cell marker based deconvolution(combined); 2)using only reference profile based deconvolution(profileOnly);3)using only cell marker based deconvolution(markerOnly)
 #' @param usebulkSigma Indicating whether gene weight/variance that captures the difference between sc and bulk are considered
 #' @param Zcutoff Cell clusters with Zfrequency (percentage of samples without this cell cluster) larger than Zcutoff need to use linear regression with intercept in marker-based deconvolution.
+#' @param topmarkerN Number of top-ranking markers per cell cluster selected in marker-based deconvolution.
+#' @param CCcutoff Correlation Coefficient cutoff used to select top-ranking markers per cell cluster in marker-based deconvolution.
 #' @param transformation Whether bulk gene expression need to transform to reduce the possible platform difference between sc and bulk RNAseq. 1)none: no transformation; 2)profile:transformation only applies to reference profile-based deconvolution; 3)marker: transformation only applied to marker-based deconvolution; 4)both: transformation applied to both.
 #' @return Estimated cell frequency matrix
 #' @export
-ProM<-function(bulk,sc.basis,markers,priorcellfreqM,method="combined",usebulkSigma=TRUE,Zcutoff=0.5,transformation="none")
+ProM<-function(bulk,sc.basis,markers,priorcellfreqM,method="combined",usebulkSigma=TRUE,Zcutoff=0.5,transformation="none",CCcutoff,topmarkerN=20,markerMethod="simulation")
   {
     ##########check the inputs
     if(any(sort(rownames(bulk))!=sort(rownames(sc.basis[[1]]))))stop("bulk and sc.basis have different genes. Please run prepareInput() to prepare the inputs")
@@ -22,21 +24,21 @@ ProM<-function(bulk,sc.basis,markers,priorcellfreqM,method="combined",usebulkSig
     if(!method %in% c("combined","profileOnly","markerOnly")) stop("method is not recognizable")
     if(missing(markers))stop("markers are needed")
     if(transformation!="none"&missing(priorcellfreqM)) print("priorcellfreqM is needed for transformation")
-    if(method!="profileOnly"&missing(priorcellfreqM)) print("priorcellfreqM is needed for marker-based deconvolution")
+    if(method!="profileOnly"&missing(priorcellfreqM)&markerMethod=="simulation") print("priorcellfreqM is needed for marker-based deconvolution from simulation")
     if(!missing(priorcellfreqM)&any(colSums(priorcellfreqM>1)>0)) print("Values in priorcellfreqM can not be larger than 1")
     if(!missing(priorcellfreqM))priorcellfreqM[priorcellfreqM==1]<-0.99 ###cell frequency can't be 1, otherwize beta estimation will be error
     
       
       
     ###############run ProM with and without markerintercept for each cell type based on NZpercent
-    finalEstimate<-promDeconvolution(bulk,sc.basis,markers,priorcellfreqM,method,usebulkSigma,markerintercept=FALSE,transformation)
+    finalEstimate<-promDeconvolution(bulk,sc.basis,markers,priorcellfreqM,method,usebulkSigma,markerintercept=FALSE,transformation,CCcutoff,topmarkerN=topmarkerN,markerMethod=markerMethod)
     
       Zpercent<-rowMeans(priorcellfreqM==0)
       ct<-names(Zpercent)[Zpercent>Zcutoff]
       if(length(ct)>0)
         {
       print(paste("The following celltype needs ProM with markerintercept",paste(ct,collapse=" ")))
-      t<-promDeconvolution(bulk,sc.basis,markers,priorcellfreqM,method,usebulkSigma,markerintercept=TRUE,transformation)
+      t<-promDeconvolution(bulk,sc.basis,markers,priorcellfreqM,method,usebulkSigma,markerintercept=TRUE,transformation,CCcutoff,topmarkerN=topmarkerN,markerMethod=markerMethod)
       finalEstimate[ct,]<-t[ct,]
       finalEstimate<-sweep(finalEstimate,2,colSums(finalEstimate),"/")
     }
@@ -55,7 +57,7 @@ ProM<-function(bulk,sc.basis,markers,priorcellfreqM,method="combined",usebulkSig
 
 
 ###################################################################################################
-promDeconvolution<-function(sbulk,minorsc.basis,minormarkers,calibrateminorcellfreqM, method=c("combined","profileOnly","markerOnly"),usebulkSigma=TRUE,markerintercept=FALSE,transformation=c("none","profile","marker","both"),iter.max=100,simSeed=1,simN=1000,markerMethod=c("mean"),normCellFreq=TRUE)
+promDeconvolution<-function(sbulk,minorsc.basis,minormarkers,calibrateminorcellfreqM, method=c("combined","profileOnly","markerOnly"),usebulkSigma=TRUE,markerintercept=FALSE,transformation=c("none","profile","marker","both"),CCcutoff,iter.max=100,simSeed=1,simN=1000,topmarkerN=20,markerMethod=c("simulation","simple"),normCellFreq=TRUE)
   {
 
 ############    
@@ -83,28 +85,28 @@ promDeconvolution<-function(sbulk,minorsc.basis,minormarkers,calibrateminorcellf
     if(method %in% c("markerOnly","combined"))
       {
         print("estimation from marker")
+        print(paste("marker method:",markerMethod))
          if(transformation%in%c("marker","both"))
       {
         print("transformation")
         minorreconstructM<-minorsc.basis[["M"]]%*%calibrateminorcellfreqM[colnames(minorsc.basis[["M"]]),]
         sbulk<-batchcorrection(minorreconstructM,sbulk)
-      }         
+      }
+        
         print("simulation without bulkSigma")
         simData<-simulateBulk(calibrateminorcellfreqM,minorsc.basis,N=simN,seed=simSeed)
-        print(paste("estimation from markers:",markerMethod))
-        if(markerMethod=="mean")markerEstimate<-predictfromsimulation_mean(simData$sbulk,simData$sminorcellfreqM,minormarkers,sbulk,intercept=markerintercept)
-        
+       if(markerMethod=="simulation")markerEstimate<-predictfromsimulation_mean(simData$sbulk,simData$sminorcellfreqM,minormarkers,sbulk,cutoff=CCcutoff,topmarkerN=topmarkerN,intercept=markerintercept)
+       if(markerMethod=="simple")  markerEstimate<-predictfrommarker_simple(simData$sbulk,simData$sminorcellfreqM,minormarkers,sbulk,topmarkerN=topmarkerN,intercept=markerintercept)
          if(usebulkSigma)
           {
             print("simulation with bulkSigma")
             bulksigma<-getbulksigma(minorsc.basis,markerEstimate,sbulk)
-            simData<-simulateBulk(calibrateminorcellfreqM,minorsc.basis,N=simN,bulksigma=bulksigma,seed=simSeed)
-
-            print(paste("estimation from markers:",markerMethod))
-            if(markerMethod=="mean")markerEstimate<-predictfromsimulation_mean(simData$sbulk,simData$sminorcellfreqM,minormarkers,sbulk,intercept=markerintercept)
-            
+           simData<-simulateBulk(calibrateminorcellfreqM,minorsc.basis,N=simN,bulksigma=bulksigma,seed=simSeed)
+         if(markerMethod=="simulation") markerEstimate<-predictfromsimulation_mean(simData$sbulk,simData$sminorcellfreqM,minormarkers,sbulk,cutoff=CCcutoff,topmarkerN=topmarkerN,intercept=markerintercept)
+          if(markerMethod=="simple")  markerEstimate<-predictfrommarker_simple(simData$sbulk,simData$sminorcellfreqM,minormarkers,sbulk,topmarkerN=topmarkerN,intercept=markerintercept)  
           }
       }
+        
 
     if(method %in% "combined")
       {
@@ -227,12 +229,16 @@ getbulksigma<-function(minorsc.basis,minorcellfreqM,bulk,transformation=FALSE)
 
 
 #############
-predictfromsimulation_mean<-function(trainbulk,traincellfreqM,markers,testbulk,log=TRUE,cutoff=0.3,intercept=FALSE)
+predictfromsimulation_mean<-function(trainbulk,traincellfreqM,markers,testbulk,log=TRUE,cutoff,topmarkerN=20,intercept=FALSE)
   {
+    usecutoff<-FALSE
+    if(!missing(cutoff))usecutoff<-TRUE;
     precellfreqM<-t(sapply(rownames(traincellfreqM),function(minori){
       #print(minori)
       m<-subset(markers,cluster==minori)$gene
       cc<-cor(t(trainbulk[m,]),traincellfreqM[minori,],method="pearson");
+        ################using old CC cutoff to select genes, default cutoff =0.3
+     if(usecutoff){
       r<-rownames(cc)[cc>cutoff]
       curcutoff<-cutoff
       while(length(r)<20&curcutoff>=(-1))
@@ -241,6 +247,13 @@ predictfromsimulation_mean<-function(trainbulk,traincellfreqM,markers,testbulk,l
           #print(curcutoff)
           r<-rownames(cc)[cc>curcutoff]
         }
+         }else{
+         ######using topmarkerN to select genes
+         r<-rownames(cc)[order(as.vector(cc),decreasing=TRUE)]
+        # print(cc[r,])
+         r<-r[1:min(topmarkerN,length(r))]        
+     }
+           
    
       if(log){ trainx<-exp(colMeans(log(trainbulk[r,,drop=FALSE]+1)))-1;
                testx<-exp(colMeans(log(testbulk[r,,drop=FALSE]+1)))-1}
@@ -307,3 +320,24 @@ if(!missing(outfile)){
 
 }
 
+
+#############
+predictfrommarker_simple<-function(trainbulk,traincellfreqM,markers,testbulk,log=TRUE,topmarkerN=20,intercept=FALSE)
+  {
+    precellfreqM<-t(sapply(rownames(traincellfreqM),function(minori){
+      #print(minori)
+      m<-subset(markers,cluster==minori)$gene
+      r<-m[1:min(topmarkerN,length(m))]
+      if(log){ trainx<-exp(colMeans(log(trainbulk[r,,drop=FALSE]+1)))-1;
+               testx<-exp(colMeans(log(testbulk[r,,drop=FALSE]+1)))-1}
+      if(!log){ trainx<-colMeans(trainbulk[r,,drop=FALSE]);
+               testx<-colMeans(testbulk[r,,drop=FALSE])}
+      if(!intercept)m<-lm(cellfreq ~ exp-1, data=data.frame(cellfreq=traincellfreqM[minori,],exp=trainx))
+      if(intercept)m<-lm(cellfreq ~ exp, data=data.frame(cellfreq=traincellfreqM[minori,],exp=trainx))
+        
+     predict(m,new=data.frame(cellfreq=NA,exp=testx)) 
+    }))
+    colnames(precellfreqM)<-colnames(testbulk)
+    precellfreqM[precellfreqM<0]<-0
+    return(precellfreqM);
+  }
